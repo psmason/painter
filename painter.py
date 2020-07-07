@@ -140,6 +140,7 @@ parser = argparse.ArgumentParser(description='Reconstruct an image using extract
 parser.add_argument('--iterations', type=int, help='Brush stroke iterations to run')
 parser.add_argument('--brushes_image', type=str, help='Source image for brush strokes')
 parser.add_argument('--target_image', type=str, help='Target image to reconstruct')
+parser.add_argument('--output_image_name', type=str, help='Output file name')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
@@ -155,6 +156,6 @@ for i in range(args.iterations):
     if i > 0 and i % 1000 == 0:
         print("iteration:", i, "reverted fraction:", 1.0*REVERTED_COUNT/i)
 
-cv2.imwrite("painted.jpg", canvas.astype(np.uint8))
+cv2.imwrite(args.output_image_name, canvas.astype(np.uint8))
 plt.imshow(canvas, cmap='gray', vmin=0, vmax=255)
 plt.show()
