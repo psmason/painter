@@ -9,8 +9,8 @@ import argparse
 GRIDS = 12
 HEIGHT = 4000
 WIDTH = 3000
-ALPHA = 0.7
 COLORS_IN_PALETTE = 8
+BRUSH_INTENSITY_THRESHOLD = 0.05
 
 REVERTED_COUNT = 0
 
@@ -58,7 +58,13 @@ def extractBrushStrokesFromGrayscale(img):
         # A brush stroke is described by a matrix of color intensities.
         # An intensity of 1.0 is the original color. An intensity closer
         # to 0.0 is original color transformed to value closer to white.
-        brush_strokes.append(abs(edge_median - raw_brush_stroke)/255.0)
+        normalized = abs(edge_median - raw_brush_stroke)
+        normalized = normalized / np.max(normalized)
+
+        # Zero'ing values below a threshold.
+        normalized[normalized < BRUSH_INTENSITY_THRESHOLD] = 0
+
+        brush_strokes.append(normalized)
 
     return brush_strokes
 
@@ -79,12 +85,11 @@ def randomBrushStroke(target, canvas, brush_strokes, palette, debug_mode):
     global REVERTED_COUNT
     brush = random.choice(brush_strokes)
 
-    rotation, scale = random.randint(0, 365), random.uniform(0.1, 1.0)
+    rotation, scale = random.randint(0, 365), random.uniform(0.5, 1.0)
     rotated = ndimage.rotate(brush, rotation, reshape=True)
     scaled = cv2.resize(rotated, (0,0), fx=scale, fy=scale)
 
     random_color = random.choice(palette)
-    random_brush_stroke = random_color * scaled
     #random_color = (random.randint(0,255), random.randint(0, 255), random.randint(0,255))
     #b = random_color[0] + (255.0-random_color[0]) * (1.0-scaled)
     #g = random_color[1] + (255.0-random_color[1]) * (1.0-scaled)
@@ -92,10 +97,11 @@ def randomBrushStroke(target, canvas, brush_strokes, palette, debug_mode):
     #merged = cv2.merge((b.astype(np.uint8),g.astype(np.uint8),r.astype(np.uint8)))
 
     # Random brush location that can contain the brush stroke.
-    location = random.randint(0, canvas.shape[0] - random_brush_stroke.shape[0] - 1),random.randint(0, canvas.shape[1] - random_brush_stroke.shape[1] - 1)
+    location = (random.randint(0, canvas.shape[0] - scaled.shape[0] - 1),
+                random.randint(0, canvas.shape[1] - scaled.shape[1] - 1))
 
-    rowsToUpdate = (location[0], location[0]+random_brush_stroke.shape[0])
-    colsToUpdate = (location[1], location[1]+random_brush_stroke.shape[1])
+    rowsToUpdate = (location[0], location[0]+scaled.shape[0])
+    colsToUpdate = (location[1], location[1]+scaled.shape[1])
 
     canvas_roi = canvas[rowsToUpdate[0]:rowsToUpdate[1],colsToUpdate[0]:colsToUpdate[1]]
     target_roi = target[rowsToUpdate[0]:rowsToUpdate[1],colsToUpdate[0]:colsToUpdate[1]]
@@ -109,32 +115,37 @@ def randomBrushStroke(target, canvas, brush_strokes, palette, debug_mode):
     #canvas_roi[:,:,0] += np.multiply(scaled_roi, brush_roi[:,:,0])
     #canvas_roi[:,:,1] += np.multiply(scaled_roi, brush_roi[:,:,1])
     #canvas_roi[:,:,2] += np.multiply(scaled_roi, brush_roi[:,:,2])
-    canvas_roi = np.multiply(1.0 - scaled, canvas_roi)
-    canvas_roi += np.multiply(scaled, random_brush_stroke)
+    canvas_roi = random_color + np.multiply(canvas_roi-random_color, 1.0-scaled)
     distance_new = computeImageDistance(target_roi, canvas_roi, scaled)
     
     if debug_mode:
-        fig, axs = plt.subplots(2,3, figsize=(10,10))
-        axs[1][0].set_title('target image')
-        axs[1][0].imshow(target, cmap='gray', vmin=0, vmax=255)
-        axs[1][1].set_title('target roi')
-        axs[1][1].imshow(target_roi, cmap='gray', vmin=0, vmax=255)
-        axs[1][2].set_title('brush stroke')
-        axs[1][2].imshow(scaled, cmap='gray')
+        random_brush_stroke = random_color + (255.0-random_color)*(1.0-scaled)
+        fig, axs = plt.subplots(3,3, figsize=(10,10))
         axs[0][0].set_title('canvas')
         axs[0][0].imshow(canvas, cmap='gray', vmin=0, vmax=255)
         axs[0][1].set_title('canvas roi: d = %3.2f' % (math.log(distance_new)))
         axs[0][1].imshow(canvas_roi, cmap='gray', vmin=0, vmax=255)
         axs[0][2].set_title('canvas original roi: d = %3.2f' % (math.log(distance_original)))
         axs[0][2].imshow(canvas_roi_original, cmap='gray', vmin=0, vmax=255)
+        axs[1][0].set_title('target image')
+        axs[1][0].imshow(target, cmap='gray', vmin=0, vmax=255)
+        axs[1][1].set_title('target roi')
+        axs[1][1].imshow(target_roi, cmap='gray', vmin=0, vmax=255)
+        axs[1][2].set_title('raw brush stroke')
+        axs[1][2].imshow(brush, cmap='gray')
+        axs[2][0].set_title('brush weights')
+        axs[2][0].imshow(scaled, cmap='gray')
+        axs[2][1].set_title('scaled brush: color = %d' % (random_color))
+        axs[2][1].imshow(np.multiply(scaled, random_brush_stroke), cmap='gray', vmin=0, vmax=255)
+        axs[2][2].set_title('brush stroke: color = %d' % (random_color))
+        axs[2][2].imshow(random_brush_stroke, cmap='gray', vmin=0, vmax=255)
         plt.show()
 
     if distance_new < distance_original:
         canvas[rowsToUpdate[0]:rowsToUpdate[1],colsToUpdate[0]:colsToUpdate[1]] = canvas_roi
     else:
-        # revert the change
+        # Avoiding the update
         REVERTED_COUNT += 1
-        canvas[rowsToUpdate[0]:rowsToUpdate[1],colsToUpdate[0]:colsToUpdate[1]] = canvas_roi_original
 
 parser = argparse.ArgumentParser(description='Reconstruct an image using extracted brush strokes.')
 parser.add_argument('--iterations', type=int, help='Brush stroke iterations to run')
@@ -147,7 +158,6 @@ args = parser.parse_args()
 brush_strokes = extractBrushStrokesFromGrayscale(cv2.imread(args.brushes_image, cv2.IMREAD_GRAYSCALE))
 target = cv2.imread(args.target_image,  cv2.IMREAD_GRAYSCALE)
 color_palette = extractColorPalette(target)
-
 target_float = target.astype(np.float)
 canvas = 255 * np.ones(target.shape, np.float)
 
