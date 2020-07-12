@@ -7,18 +7,17 @@ import math
 import argparse
 
 GRIDS = 12
-HEIGHT = 4000
-WIDTH = 3000
-COLORS_IN_PALETTE = 8
+COLORS_IN_PALETTE = 32
 BRUSH_INTENSITY_THRESHOLD = 0.05
+MIN_BRUSH_SCALE = 0.1
+MAX_BRUSH_SCALE = 1.0
 
 REVERTED_COUNT = 0
 
-def extractBrushStrokesFromGrayscale(img):
+def extractBrushStrokesFromGrayscale(img, debug_mode):
     denoisedAndInverted = cv2.medianBlur(255-img, 5)
 
-    # Identifying black pigments distinct from the nearby
-    # regions background color.
+    # Identifying black pigments distinct from the local background color.
     background_colors = np.zeros(img.shape, np.uint8)
     yDim, xDim = img.shape
     for i in range(GRIDS):
@@ -27,15 +26,23 @@ def extractBrushStrokesFromGrayscale(img):
             xRange = int(j*(xDim/GRIDS)),int((j+1)*(xDim/GRIDS))
             m = np.median(denoisedAndInverted[yRange[0]:yRange[1], xRange[0]:xRange[1]])
             background_colors[yRange[0]:yRange[1], xRange[0]:xRange[1]] = m
-    # Masking pixels which are similar to the nearby region's background color.
-    mask = np.greater(denoisedAndInverted, background_colors+30)
+    # Masking pixels which are similar to the local background color.
+    mask = np.uint8(np.greater(denoisedAndInverted, background_colors+30))
 
     # Dilating the mask to avoid cutting off segments of the brush stroke.
-    dilated_mask = cv2.dilate(mask.astype(np.uint8), np.ones((5,5),np.uint8), iterations = 15)
+    dilated_mask = cv2.dilate(mask, np.ones((5,5),np.uint8), iterations = 15)
 
     # Identifying distinct brush strokes from other strokes.
     _, contours, _ = cv2.findContours(dilated_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    if debug_mode:
+        tmp = img.copy()
+        cv2.drawContours(tmp, contours, -1, 255, 10)
+        plotDebugImage(plt, tmp)
+        plt.title("Candidate brush regions")
+        plt.show()
+
+    bounding_rects = []
     brush_strokes = []
     for i in range(len(contours)):
         x,y,w,h = cv2.boundingRect(contours[i])
@@ -56,14 +63,30 @@ def extractBrushStrokesFromGrayscale(img):
         )
 
         # Intensity as described by the color distance from the brush stroke border.
-        normalized = abs(edge_median - raw_brush_stroke)
-        normalized = normalized / np.max(normalized)
+        intensities = abs(edge_median - raw_brush_stroke)
+        hist = np.histogram(intensities, np.arange(256))
+        # Does the intensity image have enough pixels significantly different from the
+        # background color. If not, this might be a false region for a brush stroke.
+        if np.sum(hist[0][50:]) == 0.0:
+            continue
+
+        bounding_rects.append((x,y,w,h))
+        normalized = intensities / np.max(intensities)
 
         # Zero'ing values below a threshold.
         normalized[normalized < BRUSH_INTENSITY_THRESHOLD] = 0
 
         brush_strokes.append(normalized)
 
+    if debug_mode:
+        tmp = img.copy()
+        for rect in bounding_rects:
+            x,y,w,h = rect
+            cv2.rectangle(tmp, (x,y), (x+w,y+h), 255, 10)
+        plt.title("Used brush strokes")
+        plotDebugImage(plt, tmp)
+        plt.show()
+    
     return brush_strokes
 
 def getColorDepth(img):
@@ -77,9 +100,6 @@ def getColorDepth(img):
     sys.exit(1)
 
 def plotDebugImage(axis, img, **kwargs):
-    if axis is None:
-        axis = plt
-
     if getColorDepth(img) == 3:
         axis.imshow(cv2.cvtColor(np.uint8(img), cv2.COLOR_BGR2RGB))
         return
@@ -100,7 +120,7 @@ def extractColorPalette(target, debug_mode):
                                   None,
                                   criteria,
                                   10,
-                                  cv2.KMEANS_RANDOM_CENTERS)
+                                  cv2.KMEANS_PP_CENTERS)
 
     if debug_mode:
         res = palette[labels.flatten()]
@@ -121,8 +141,16 @@ def randomBrushStroke(target, canvas, brush_strokes, palette, debug_mode):
     global REVERTED_COUNT
     brush = random.choice(brush_strokes)
 
-    rotation, scale = random.randint(0, 365), random.uniform(0.5, 1.0)
-    rotated = ndimage.rotate(brush, rotation, reshape=True)
+    rotated = ndimage.rotate(brush, random.randint(0, 365), reshape=True)
+    # Rotations introduce negative intensities, probably because of rotation
+    # matrices involved: https://en.wikipedia.org/wiki/Rotation_matrix.
+    # If not removed, negative intensities cause problem when multiplied
+    # against a random color.
+    rotated[rotated < 0.0] = 0
+
+    # Distribution favoring smaller brush strokes, which are needed for detailed
+    # image sections. Resulting range is 0.1 to 1.0 of the original brush stroke.
+    scale = 1.0 / random.uniform(1.0/MAX_BRUSH_SCALE, 1.0/MIN_BRUSH_SCALE)
     scaled = cv2.resize(rotated, None, fx=scale, fy=scale)
 
     # Empty trailing dimension needed for numpy broadcasting.
@@ -164,7 +192,7 @@ def randomBrushStroke(target, canvas, brush_strokes, palette, debug_mode):
         plotDebugImage(axs[1][2], brush, scaled=True)
         axs[2][0].set_title('brush weights')
         plotDebugImage(axs[2][0], scaled, scaled=True)
-        axs[2][1].set_title('scaled brushs')
+        axs[2][1].set_title('scaled brush')
         plotDebugImage(axs[2][1], np.multiply(scaled, random_brush_on_white))
         # Reversing colors since matplotlib is RGB.
         axs[2][2].set_title('brush stroke: color = %s' % (str(np.uint8(random_color[::-1]))))
@@ -187,7 +215,9 @@ parser.add_argument('--debug', action='store_true', help='Enable debug mode')
 parser.add_argument('--bw', action='store_true', help='Enable black and white mode')
 args = parser.parse_args()
 
-brush_strokes = extractBrushStrokesFromGrayscale(cv2.imread(args.brushes_image, cv2.IMREAD_GRAYSCALE))
+brush_strokes = extractBrushStrokesFromGrayscale(
+    cv2.imread(args.brushes_image, cv2.IMREAD_GRAYSCALE),
+    args.debug)
 target = cv2.imread(args.target_image,  cv2.IMREAD_COLOR)
 if args.bw:
     target = cv2.cvtColor(target, cv2.COLOR_BGR2GRAY)
@@ -204,7 +234,7 @@ for i in range(args.iterations):
         print("iteration:", i, "reverted fraction:", 1.0*REVERTED_COUNT/i)
 
 if args.debug:
-    plotDebugImage(None, canvas)
+    plotDebugImage(plt, canvas)
     plt.show()
 
 canvas = np.uint8(canvas)
