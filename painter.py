@@ -7,7 +7,7 @@ import math
 import argparse
 
 GRIDS = 12
-COLORS_IN_PALETTE = 32
+COLORS_IN_PALETTE = 128
 BRUSH_INTENSITY_THRESHOLD = 0.05
 MIN_BRUSH_SCALE = 0.1
 MAX_BRUSH_SCALE = 1.0
@@ -21,9 +21,9 @@ def extractBrushStrokesFromGrayscale(img, debug_mode):
     background_colors = np.zeros(img.shape, np.uint8)
     yDim, xDim = img.shape
     for i in range(GRIDS):
-        yRange = int(i*(yDim/GRIDS)),int((i+1)*(yDim/GRIDS))
+        yRange = int(i*(yDim/GRIDS)), int((i+1)*(yDim/GRIDS))
         for j in range(GRIDS):
-            xRange = int(j*(xDim/GRIDS)),int((j+1)*(xDim/GRIDS))
+            xRange = int(j*(xDim/GRIDS)), int((j+1)*(xDim/GRIDS))
             m = np.median(denoisedAndInverted[yRange[0]:yRange[1], xRange[0]:xRange[1]])
             background_colors[yRange[0]:yRange[1], xRange[0]:xRange[1]] = m
     # Masking pixels which are similar to the local background color.
@@ -156,6 +156,10 @@ def randomBrushStroke(target, canvas, brush_strokes, palette, debug_mode):
     # Empty trailing dimension needed for numpy broadcasting.
     scaled = scaled[..., np.newaxis]
 
+    if canvas.shape[0] <= scaled.shape[0] or canvas.shape[1] <= scaled.shape[1]:
+        # Scaled brush stroke is too large.
+        return
+    
     # Random brush location that can contain the brush stroke.
     location = (random.randint(0, canvas.shape[0] - scaled.shape[0] - 1),
                 random.randint(0, canvas.shape[1] - scaled.shape[1] - 1))
