@@ -10,13 +10,10 @@ from matplotlib import pyplot as plt
 from scipy import ndimage
 
 GRIDS = 12
-COLORS_IN_PALETTE = 128
+COLORS_IN_PALETTE = 256
 BRUSH_INTENSITY_THRESHOLD = 0.05
 MIN_BRUSH_SCALE = 0.1
 MAX_BRUSH_SCALE = 1.0
-
-REVERTED_COUNT = 0
-
 
 def extractBrushStrokesFromGrayscale(img, debug_mode):
     denoisedAndInverted = cv2.medianBlur(255 - img, 5)
@@ -84,7 +81,16 @@ def extractBrushStrokesFromGrayscale(img, debug_mode):
         # Zero'ing values below a threshold.
         normalized[normalized < BRUSH_INTENSITY_THRESHOLD] = 0
 
-        brush_strokes.append(normalized)
+        # Rotations are expensive, so let's do them once and keep the result
+        # in memory.
+        for angle in range(0, 360, 10):
+            rotated = ndimage.rotate(normalized, angle, reshape=True)
+            # Rotations introduce negative intensities, probably because of rotation
+            # matrices involved: https://en.wikipedia.org/wiki/Rotation_matrix.
+            # If not removed, negative intensities cause problem when multiplied
+            # against a random color.
+            rotated[rotated < 0.0] = 0
+            brush_strokes.append(rotated)
 
     if debug_mode:
         tmp = img.copy()
@@ -146,25 +152,17 @@ def extractColorPalette(target, debug_mode):
     return palette
 
 
-def randomBrushStroke(target, canvas, brush_strokes, palette, debug_mode):
+def randomBrushStroke(target, canvas, brush_strokes, palette, counters, debug_mode):
     def computeImageDistance(img1, img2, weights):
         return np.sum(np.multiply(np.square(img1 - img2), weights))
 
-    global REVERTED_COUNT
     brush = random.choice(brush_strokes)
-
-    rotated = ndimage.rotate(brush, random.randint(0, 365), reshape=True)
-    # Rotations introduce negative intensities, probably because of rotation
-    # matrices involved: https://en.wikipedia.org/wiki/Rotation_matrix.
-    # If not removed, negative intensities cause problem when multiplied
-    # against a random color.
-    rotated[rotated < 0.0] = 0
 
     # Distribution favoring smaller brush strokes, which are needed for detailed
     # image sections. Resulting range is 0.1 to 1.0 of the original brush
     # stroke.
     scale = 1.0 / random.uniform(1.0 / MAX_BRUSH_SCALE, 1.0 / MIN_BRUSH_SCALE)
-    scaled = cv2.resize(rotated, None, fx=scale, fy=scale)
+    scaled = cv2.resize(brush, None, fx=scale, fy=scale)
 
     # Empty trailing dimension needed for numpy broadcasting.
     scaled = scaled[..., np.newaxis]
@@ -231,7 +229,7 @@ def randomBrushStroke(target, canvas, brush_strokes, palette, debug_mode):
         # Reverting the udpate
         canvas[rowsToUpdate[0]:rowsToUpdate[1],
                colsToUpdate[0]:colsToUpdate[1]] = canvas_roi_original
-        REVERTED_COUNT += 1
+        counters[0] += 1
 
 
 parser = argparse.ArgumentParser(
@@ -268,16 +266,18 @@ if args.bw:
 color_palette = extractColorPalette(target, args.debug)
 target_float = target.astype(np.float)
 canvas = 255.0 * np.ones(target.shape, np.float)
-
+counters = [0]
 for i in range(args.iterations):
     randomBrushStroke(
         target_float,
         canvas,
         brush_strokes,
         color_palette,
+        counters,
         args.debug)
     if i > 0 and i % 1000 == 0:
-        print("iteration:", i, "reverted fraction:", 1.0 * REVERTED_COUNT / i)
+        print("iteration:", i, "recently reverted fraction:", 1.0 * counters[0] / 1000)
+        counters[0] = 0
 
 if args.debug:
     plotDebugImage(plt, canvas)
