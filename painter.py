@@ -5,6 +5,7 @@ import cv2
 import math
 import numpy as np
 import random
+import sys
 
 from matplotlib import pyplot as plt
 from scipy import ndimage
@@ -12,10 +13,11 @@ from scipy import ndimage
 GRIDS = 12
 COLORS_IN_PALETTE = 256
 BRUSH_INTENSITY_THRESHOLD = 0.05
-MIN_BRUSH_SCALE = 0.1
+MIN_BRUSH_SCALE = 0.15
 MAX_BRUSH_SCALE = 1.0
 
-def extractBrushStrokesFromGrayscale(img, debug_mode):
+
+def extract_brush_strokes_from_grayscale(img, debug_mode):
     denoisedAndInverted = cv2.medianBlur(255 - img, 5)
 
     # Identifying black pigments distinct from the local background color.
@@ -41,7 +43,7 @@ def extractBrushStrokesFromGrayscale(img, debug_mode):
     if debug_mode:
         tmp = img.copy()
         cv2.drawContours(tmp, contours, -1, 255, 10)
-        plotDebugImage(plt, tmp)
+        plot_debug_image(plt, tmp)
         plt.title("Candidate brush regions")
         plt.show()
 
@@ -72,7 +74,8 @@ def extractBrushStrokesFromGrayscale(img, debug_mode):
         # Does the intensity image have enough pixels significantly different from the
         # background color. If not, this might be a false region for a brush
         # stroke.
-        if np.sum(hist[0][50:]) == 0.0:
+        # Or if the diff is too small, might be a speck of dust or paint.
+        if np.sum(hist[0][50:]) <= 100:
             continue
 
         bounding_rects.append((x, y, w, h))
@@ -98,13 +101,13 @@ def extractBrushStrokesFromGrayscale(img, debug_mode):
             x, y, w, h = rect
             cv2.rectangle(tmp, (x, y), (x + w, y + h), 255, 10)
         plt.title("Used brush strokes")
-        plotDebugImage(plt, tmp)
+        plot_debug_image(plt, tmp)
         plt.show()
 
     return brush_strokes
 
 
-def getColorDepth(img):
+def get_color_depth(img):
     dims = img.shape
     if len(dims) == 2:
         # Simple black and white
@@ -115,8 +118,8 @@ def getColorDepth(img):
     sys.exit(1)
 
 
-def plotDebugImage(axis, img, **kwargs):
-    if getColorDepth(img) == 3:
+def plot_debug_image(axis, img, **kwargs):
+    if get_color_depth(img) == 3:
         axis.imshow(cv2.cvtColor(np.uint8(img), cv2.COLOR_BGR2RGB))
         return
 
@@ -130,9 +133,9 @@ def plotDebugImage(axis, img, **kwargs):
         axis.imshow(np.uint8(img), cmap='gray', vmin=0, vmax=255)
 
 
-def extractColorPalette(target, debug_mode):
+def extract_color_palette(target, debug_mode):
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-    _, labels, palette = cv2.kmeans(np.float32(target.reshape((-1, getColorDepth(target)))),
+    _, labels, palette = cv2.kmeans(np.float32(target.reshape((-1, get_color_depth(target)))),
                                     COLORS_IN_PALETTE,
                                     None,
                                     criteria,
@@ -144,16 +147,22 @@ def extractColorPalette(target, debug_mode):
         reduced_palette = res.reshape((target.shape))
         fig, axs = plt.subplots(2, figsize=(10, 10))
         axs[0].set_title("Target image")
-        plotDebugImage(axs[0], target)
+        plot_debug_image(axs[0], target)
         axs[1].set_title("Reduced palette")
-        plotDebugImage(axs[1], reduced_palette)
+        plot_debug_image(axs[1], reduced_palette)
         plt.show()
 
     return palette
 
 
-def randomBrushStroke(target, canvas, brush_strokes, palette, counters, debug_mode):
-    def computeImageDistance(img1, img2, weights):
+def random_brush_stroke(
+        target,
+        canvas,
+        brush_strokes,
+        palette,
+        counters,
+        debug_mode):
+    def compute_image_distance(img1, img2, weights):
         return np.sum(np.multiply(np.square(img1 - img2), weights))
 
     brush = random.choice(brush_strokes)
@@ -183,7 +192,7 @@ def randomBrushStroke(target, canvas, brush_strokes, palette, counters, debug_mo
     target_roi = target[rowsToUpdate[0]:rowsToUpdate[1],
                         colsToUpdate[0]:colsToUpdate[1]]
     canvas_roi_original = canvas_roi.copy()
-    distance_original = computeImageDistance(
+    distance_original = compute_image_distance(
         target_roi, canvas_roi_original, scaled)
 
     # Linear blend onto the canvas, with blend weights coming from brush stroke intensities.
@@ -192,43 +201,43 @@ def randomBrushStroke(target, canvas, brush_strokes, palette, counters, debug_mo
     random_color = random.choice(palette)
     canvas_roi = random_color + \
         np.multiply(canvas_roi - random_color, 1.0 - scaled)
-    distance_new = computeImageDistance(target_roi, canvas_roi, scaled)
+    distance_new = compute_image_distance(target_roi, canvas_roi, scaled)
 
     if debug_mode:
         random_brush_on_white = random_color + \
             (255.0 - random_color) * (1.0 - scaled)
         fig, axs = plt.subplots(3, 3, figsize=(10, 10))
         axs[0][0].set_title('canvas')
-        plotDebugImage(axs[0][0], canvas)
+        plot_debug_image(axs[0][0], canvas)
         axs[0][1].set_title('canvas roi: d = %3.2f' % (math.log(distance_new)))
-        plotDebugImage(axs[0][1], canvas_roi)
+        plot_debug_image(axs[0][1], canvas_roi)
         axs[0][2].set_title(
             'canvas original roi: d = %3.2f' %
             (math.log(distance_original)))
-        plotDebugImage(axs[0][2], canvas_roi_original)
+        plot_debug_image(axs[0][2], canvas_roi_original)
         axs[1][0].set_title('target image')
-        plotDebugImage(axs[1][0], target)
+        plot_debug_image(axs[1][0], target)
         axs[1][1].set_title('target roi')
-        plotDebugImage(axs[1][1], target_roi)
+        plot_debug_image(axs[1][1], target_roi)
         axs[1][2].set_title('raw brush stroke')
-        plotDebugImage(axs[1][2], brush, scaled=True)
+        plot_debug_image(axs[1][2], brush, scaled=True)
         axs[2][0].set_title('brush weights')
-        plotDebugImage(axs[2][0], scaled, scaled=True)
+        plot_debug_image(axs[2][0], scaled, scaled=True)
         axs[2][1].set_title('scaled brush')
-        plotDebugImage(axs[2][1], np.multiply(scaled, random_brush_on_white))
+        plot_debug_image(axs[2][1], np.multiply(scaled, random_brush_on_white))
         # Reversing colors since matplotlib is RGB.
         axs[2][2].set_title('brush stroke: color = %s' %
                             (str(np.uint8(random_color[::-1]))))
-        plotDebugImage(axs[2][2], random_brush_on_white)
+        plot_debug_image(axs[2][2], random_brush_on_white)
         plt.show()
 
     if distance_new < distance_original:
+        # Applying the update
         canvas[rowsToUpdate[0]:rowsToUpdate[1],
                colsToUpdate[0]:colsToUpdate[1]] = canvas_roi
+        counters[1] += 1
     else:
-        # Reverting the udpate
-        canvas[rowsToUpdate[0]:rowsToUpdate[1],
-               colsToUpdate[0]:colsToUpdate[1]] = canvas_roi_original
+        # Rejecting the brush stroke.
         counters[0] += 1
 
 
@@ -247,6 +256,11 @@ parser.add_argument(
     type=str,
     help='Target image to reconstruct')
 parser.add_argument('--output_image_name', type=str, help='Output file name')
+parser.add_argument(
+    '--output_interval',
+    type=int,
+    default=0,
+    help='Interval between iterations to print canvas to stdout (jpg)')
 parser.add_argument('--debug', action='store_true', help='Enable debug mode')
 parser.add_argument(
     '--bw',
@@ -254,7 +268,8 @@ parser.add_argument(
     help='Enable black and white mode')
 args = parser.parse_args()
 
-brush_strokes = extractBrushStrokesFromGrayscale(
+print("Extracting brush strokes...", file=sys.stderr)
+brush_strokes = extract_brush_strokes_from_grayscale(
     cv2.imread(args.brushes_image, cv2.IMREAD_GRAYSCALE),
     args.debug)
 target = cv2.imread(args.target_image, cv2.IMREAD_COLOR)
@@ -263,24 +278,33 @@ if args.bw:
     # Trailing axis needed for numpy broadcasting.
     target = target[..., np.newaxis]
 
-color_palette = extractColorPalette(target, args.debug)
+print("Extracting color palette...", file=sys.stderr)
+color_palette = extract_color_palette(target, args.debug)
+
+print("Painting...", file=sys.stderr)
 target_float = target.astype(np.float)
 canvas = 255.0 * np.ones(target.shape, np.float)
-counters = [0]
+counters = [
+    0,  # Recently rejected count
+    0  # Accepted count
+]
 for i in range(args.iterations):
-    randomBrushStroke(
+    random_brush_stroke(
         target_float,
         canvas,
         brush_strokes,
         color_palette,
         counters,
         args.debug)
-    if i > 0 and i % 1000 == 0:
-        print("iteration:", i, "recently reverted fraction:", 1.0 * counters[0] / 1000)
-        counters[0] = 0
+    if i > 0:
+        if i % 1000 == 0:
+            print("iteration:", i, "recently reverted fraction:", 1.0 * counters[0] / 1000, file=sys.stderr)
+            counters[0] = 0
+        if args.output_interval > 0 and counters[1] % args.output_interval == 0:
+            sys.stdout.buffer.write(cv2.imencode(".jpg", canvas)[1].tostring())
 
 if args.debug:
-    plotDebugImage(plt, canvas)
+    plot_debug_image(plt, canvas)
     plt.show()
 
 canvas = np.uint8(canvas)
