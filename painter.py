@@ -296,12 +296,18 @@ for i in range(args.iterations):
         color_palette,
         counters,
         args.debug)
-    if i > 0:
-        if i % 1000 == 0:
-            print("iteration:", i, "recently reverted fraction:", 1.0 * counters[0] / 1000, file=sys.stderr)
-            counters[0] = 0
-        if args.output_interval > 0 and counters[1] % args.output_interval == 0:
-            sys.stdout.buffer.write(cv2.imencode(".jpg", canvas)[1].tostring())
+    if i % 1000 == 0:
+        print("iteration:", i, "recently reverted fraction:", 1.0 * counters[0] / 1000, file=sys.stderr)
+        counters[0] = 0
+    if args.output_interval > 0 and (
+            counters[1] in range(0, 100, 2)
+            or counters[1] in range(102, 200, 2)
+            or counters[1] in range(204, 400, 4)
+            or counters[1] in range(410, 800, 10)
+            or counters[1] in range(850, 1600, 50)
+            or counters[1] in range(1700, 3000, 100)
+            or counters[1] % args.output_interval == 0):
+        sys.stdout.buffer.write(cv2.imencode(".jpg", canvas)[1].tostring())
 
 if args.debug:
     plot_debug_image(plt, canvas)
