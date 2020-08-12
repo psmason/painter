@@ -10,8 +10,8 @@ import sys
 from matplotlib import pyplot as plt
 from scipy import ndimage
 
-GRIDS = 12
-COLORS_IN_PALETTE = 256
+BRUSH_STROKE_GRIDS = 12
+BRUSH_STROKE_BACKGROUND_THRESHOLD = 30
 BRUSH_INTENSITY_THRESHOLD = 0.05
 MIN_BRUSH_SCALE = 0.15
 MAX_BRUSH_SCALE = 1.0
@@ -23,15 +23,18 @@ def extract_brush_strokes_from_grayscale(img, debug_mode):
     # Identifying black pigments distinct from the local background color.
     background_colors = np.zeros(img.shape, np.uint8)
     yDim, xDim = img.shape
-    for i in range(GRIDS):
-        yRange = int(i * (yDim / GRIDS)), int((i + 1) * (yDim / GRIDS))
-        for j in range(GRIDS):
-            xRange = int(j * (xDim / GRIDS)), int((j + 1) * (xDim / GRIDS))
+    for i in range(BRUSH_STROKE_GRIDS):
+        yRange = int(i * (yDim / BRUSH_STROKE_GRIDS)
+                     ), int((i + 1) * (yDim / BRUSH_STROKE_GRIDS))
+        for j in range(BRUSH_STROKE_GRIDS):
+            xRange = int(j * (xDim / BRUSH_STROKE_GRIDS)
+                         ), int((j + 1) * (xDim / BRUSH_STROKE_GRIDS))
             m = np.median(
                 denoisedAndInverted[yRange[0]:yRange[1], xRange[0]:xRange[1]])
             background_colors[yRange[0]:yRange[1], xRange[0]:xRange[1]] = m
     # Masking pixels which are similar to the local background color.
-    mask = np.uint8(np.greater(denoisedAndInverted, background_colors + 30))
+    mask = np.uint8(
+            denoisedAndInverted > background_colors + BRUSH_STROKE_BACKGROUND_THRESHOLD)
 
     # Dilating the mask to avoid cutting off segments of the brush stroke.
     dilated_mask = cv2.dilate(mask, np.ones((5, 5), np.uint8), iterations=15)
@@ -133,10 +136,10 @@ def plot_debug_image(axis, img, **kwargs):
         axis.imshow(np.uint8(img), cmap='gray', vmin=0, vmax=255)
 
 
-def extract_color_palette(target, debug_mode):
+def extract_color_palette(target, color_palette_size, debug_mode):
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
     _, labels, palette = cv2.kmeans(np.float32(target.reshape((-1, get_color_depth(target)))),
-                                    COLORS_IN_PALETTE,
+                                    color_palette_size,
                                     None,
                                     criteria,
                                     10,
@@ -163,7 +166,7 @@ def random_brush_stroke(
         counters,
         debug_mode):
     def compute_image_distance(img1, img2, weights):
-        return np.sum(np.multiply(np.square(img1 - img2), weights))
+        return np.sum(np.square(img1 - img2) * weights)
 
     brush = random.choice(brush_strokes)
 
@@ -199,8 +202,7 @@ def random_brush_stroke(
     # Intensity closer to 1.0 favors the brush stroke color. Intensity closer to 0.0 favors
     # the background canvas color.
     random_color = random.choice(palette)
-    canvas_roi = random_color + \
-        np.multiply(canvas_roi - random_color, 1.0 - scaled)
+    canvas_roi = random_color + (canvas_roi - random_color) * (1.0 - scaled)
     distance_new = compute_image_distance(target_roi, canvas_roi, scaled)
 
     if debug_mode:
@@ -224,7 +226,7 @@ def random_brush_stroke(
         axs[2][0].set_title('brush weights')
         plot_debug_image(axs[2][0], scaled, scaled=True)
         axs[2][1].set_title('scaled brush')
-        plot_debug_image(axs[2][1], np.multiply(scaled, random_brush_on_white))
+        plot_debug_image(axs[2][1], scaled * random_brush_on_white)
         # Reversing colors since matplotlib is RGB.
         axs[2][2].set_title('brush stroke: color = %s' %
                             (str(np.uint8(random_color[::-1]))))
@@ -251,6 +253,11 @@ parser.add_argument(
     '--brushes_image',
     type=str,
     help='Source image for brush strokes')
+parser.add_argument(
+    '--color_palette_size',
+    type=int,
+    default=256,
+    help='Number of distinct colors used for brush strokes')
 parser.add_argument(
     '--target_image',
     type=str,
@@ -279,7 +286,8 @@ if args.bw:
     target = target[..., np.newaxis]
 
 print("Extracting color palette...", file=sys.stderr)
-color_palette = extract_color_palette(target, args.debug)
+color_palette = extract_color_palette(
+    target, args.color_palette_size, args.debug)
 
 print("Painting...", file=sys.stderr)
 target_float = target.astype(np.float)
