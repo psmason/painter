@@ -1,0 +1,1 @@
+./painter.py --iterations=10000000 --brushes_image=brush_shapes.jpg --target_image=hudson.jpg --output_image=hudson-painted-shapes-10m.jpg --output_interval=500 | ffmpeg -f image2pipe -i - -c:v libx264 -r 8 -pix_fmt yuv420p hudson-painted-shapes-10m.mp4
